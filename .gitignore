@@ -1,0 +1,14 @@
+# 1. data files
+raw_data/
+*.csv
+
+# 2. environment files
+.env
+.venv/
+venv/
+conda-env/
+README_RESEARCH.md
+
+# 3. Mac
+.DS_Store
+
