@@ -1,6 +1,11 @@
 # 1. data files
+data/
 raw_data/
+processed_data/
 *.csv
+*.xlsx
+*.parquet
+*.rds
 
 # 2. environment files
 .env
@@ -11,4 +16,10 @@ README_RESEARCH.md
 
 # 3. Mac
 .DS_Store
+
+# 4. Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
