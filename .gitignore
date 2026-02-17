@@ -1,4 +1,4 @@
-# 1. data files
+# data files
 data/
 raw_data/
 processed_data/
@@ -8,20 +8,29 @@ documents/
 *.parquet
 *.rds
 
-# 2. environment files
+# environment files
 .env
 .venv/
 venv/
 conda-env/
 README_RESEARCH.md
+configs/
 
-# 3. Mac
+# Mac
 .DS_Store
 
-# 4. Python
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-flow_data_preprocess.R
+# Results/logs
+results/
+logs/
+
+# R
+r/
+
+# development files
+scripts/10_run_dev.py
