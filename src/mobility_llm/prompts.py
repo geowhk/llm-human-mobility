@@ -71,6 +71,7 @@ def build_prompts_df(df: pd.DataFrame, scale: str, config: dict[str, Any]) -> pd
     """Build prompt records from a source dataframe and config column mapping."""
     columns = config["columns"]
     template = config["prompt"]["template"]
+    variant = config.get("prompt", {}).get("variant", "original")
 
     orig_col = columns["origin_id"]
     dest_col = columns["dest_id"]
@@ -79,20 +80,58 @@ def build_prompts_df(df: pd.DataFrame, scale: str, config: dict[str, Any]) -> pd
     flow_col = columns["flow_gt"]
     name_map: dict[str, str] = {}
 
-    map_path = (
-        config.get("data", {})
-        .get("id_to_prompt_name", {})
-        .get(scale)
-    )
-    if isinstance(map_path, str) and map_path.strip():
-        try:
-            if Path(map_path).exists():
-                name_map = load_code_name_map(map_path)
-        except Exception as exc:
-            warnings.warn(
-                f"Failed to load id_to_prompt_name mapping for scale={scale}: {exc}",
-                RuntimeWarning,
+    if variant == "original":
+        map_path = (
+            config.get("data", {})
+            .get("id_to_prompt_name", {})
+            .get(scale)
+        )
+        if isinstance(map_path, str) and map_path.strip():
+            try:
+                if Path(map_path).exists():
+                    name_map = load_code_name_map(map_path)
+            except Exception as exc:
+                warnings.warn(
+                    f"Failed to load id_to_prompt_name mapping for scale={scale}: {exc}",
+                    RuntimeWarning,
+                )
+    elif variant == "geometry":
+        required_geo_cols = ["orig_lat", "orig_lon", "dest_lat", "dest_lon"]
+        missing_geo_cols = [c for c in required_geo_cols if c not in df.columns]
+        if missing_geo_cols:
+            raise ValueError(
+                "Geometry prompt variant requires dataset columns: "
+                "orig_lat, orig_lon, dest_lat, dest_lon. "
+                f"Missing: {missing_geo_cols}"
             )
+    else:
+        raise ValueError(
+            f"Unsupported prompt variant: {variant}. "
+            "Supported variants are 'original' and 'geometry'."
+        )
+
+    if variant == "original":
+        origin_text_series = df[orig_col].astype(str).map(
+            lambda x: normalize_location_text(apply_name_map(x, name_map))
+        )
+        dest_text_series = df[dest_col].astype(str).map(
+            lambda x: normalize_location_text(apply_name_map(x, name_map))
+        )
+    else:
+        origin_text_series = (
+            "location coordinates (" +
+            df["orig_lat"].astype(float).round(3).astype(str) +
+            ", " +
+            df["orig_lon"].astype(float).round(3).astype(str) +
+            ") in Seoul"
+        )
+        dest_text_series = (
+            "location coordinates (" +
+            df["dest_lat"].astype(float).round(3).astype(str) +
+            ", " +
+            df["dest_lon"].astype(float).round(3).astype(str) +
+            ") in Seoul"
+        )
 
     out = pd.DataFrame(
         {
@@ -100,12 +139,8 @@ def build_prompts_df(df: pd.DataFrame, scale: str, config: dict[str, Any]) -> pd
             "origin_id": df[orig_col].astype(str),
             "dest_id": df[dest_col].astype(str),
             "hour": df[hour_col].astype(int),
-            "origin_text": df[orig_col].astype(str).map(
-                lambda x: normalize_location_text(apply_name_map(x, name_map))
-            ),
-            "dest_text": df[dest_col].astype(str).map(
-                lambda x: normalize_location_text(apply_name_map(x, name_map))
-            ),
+            "origin_text": origin_text_series,
+            "dest_text": dest_text_series,
         }
     )
 

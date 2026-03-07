@@ -41,6 +41,7 @@ def compute_cache_key(input_path: str, config: dict) -> str:
 
     template = str(config.get("prompt", {}).get("template", ""))
     template_hash = hashlib.sha1(template.encode("utf-8")).hexdigest()
+    variant = str(config.get("prompt", {}).get("variant", "original"))
 
     payload_items: list[str] = []
     for i, p in enumerate(abs_paths):
@@ -59,6 +60,7 @@ def compute_cache_key(input_path: str, config: dict) -> str:
         [
             f"model_id={model_id}",
             f"prompt_template_hash={template_hash}",
+            f"prompt_variant={variant}",
         ]
     )
     payload = "\n".join(payload_items)
@@ -314,11 +316,14 @@ def run_forward_and_cache(
     gu_mask_all = (row_index_df["orig"].str.len() == 5) & (row_index_df["dest"].str.len() == 5)
     row_index_df_gu = row_index_df.loc[gu_mask_all].reset_index(drop=True)
 
+    variant = str(config.get("prompt", {}).get("variant", "original"))
+
     meta = {
         "cache_key": cache_dir.name,
         "input_path": input_path_abs,
         "model_id": model_id,
         "prompt_template_hash": prompt_template_hash,
+        "prompt_variant": variant,
         "n_rows_all": int(len(df_work)),
         "n_rows_gu": int(len(row_index_df_gu)),
         "hidden_dim": int(hidden_dim or 0),
