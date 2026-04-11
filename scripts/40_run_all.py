@@ -42,6 +42,23 @@ from mobility_llm.rq3_step3 import run_step3
 from mobility_llm.split import attach_split, make_group_split, make_pair_id, validate_split
 
 
+def _log_progress(log_paths: Path | list[Path] | tuple[Path, ...] | None, message: str) -> None:
+    line = f"[PROGRESS] {message}"
+    print(line, flush=True)
+    if log_paths is None:
+        return
+    if isinstance(log_paths, Path):
+        paths = [log_paths]
+    else:
+        paths = list(log_paths)
+    seen: set[Path] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        write_text(str(path), line + "\n")
+        seen.add(path)
+
+
 def _abs_path(path_str: str) -> Path:
     p = Path(path_str)
     if not p.is_absolute():
@@ -94,6 +111,7 @@ def _compute_metrics_json(pred_df: pd.DataFrame) -> dict:
 
 
 def main() -> None:
+    log_path: Path | None = None
     try:
         parser = argparse.ArgumentParser()
         parser.add_argument("--config", required=True, help="Path to config YAML")
@@ -121,35 +139,48 @@ def main() -> None:
 
         log_path = run_dir / "log.txt"
         write_text(str(log_path), f"RUN_DIR: {run_dir}\n", append=False)
+        _log_progress(log_path, f"START config={args.config}")
+        _log_progress(log_path, f"CONFIG_LOADED run_mode={run_mode}")
 
         gu_path_raw = str(config["data"]["datasets"]["gu"]["path"])
         dong_path_raw = str(config["data"]["datasets"]["dong"]["path"])
         gu_abs = _abs_path(gu_path_raw)
         dong_abs = _abs_path(dong_path_raw)
         input_path = f"{gu_abs};{dong_abs}"
+        _log_progress(log_path, f"INPUT_PATHS_RESOLVED gu={gu_abs} dong={dong_abs}")
 
         gu_df = load_parquet(str(gu_abs)).copy()
         dong_df = load_parquet(str(dong_abs)).copy()
+        _log_progress(log_path, f"DATA_LOADED gu_rows={len(gu_df)} dong_rows={len(dong_df)}")
         prompts_gu = build_prompts_df(gu_df, "gu", config)
         prompts_dong = build_prompts_df(dong_df, "dong", config)
         df_forward = pd.concat([prompts_gu, prompts_dong], ignore_index=True)
+        _log_progress(
+            log_path,
+            f"PROMPTS_BUILT gu_rows={len(prompts_gu)} dong_rows={len(prompts_dong)} total_rows={len(df_forward)}",
+        )
 
         cache_key = compute_cache_key(input_path, config)
         cache_dir = get_cache_dir(PROJECT_ROOT, cache_key)
         cache_hit = cache_exists(cache_dir)
+        _log_progress(log_path, f"CACHE_LOOKUP cache_dir={cache_dir} cache_key={cache_key}")
+        _log_progress(log_path, "CACHE_HIT" if cache_hit else "CACHE_MISS")
         cached = ensure_cache(
             project_root=PROJECT_ROOT,
             config=config,
             input_path=input_path,
             df=df_forward,
+            progress_callback=lambda msg: _log_progress(log_path, msg),
         )
         write_text(str(log_path), f"CACHE_DIR: {cache_dir}\n")
         write_text(str(log_path), f"CACHE_KEY: {cache_key}\n")
         write_text(str(log_path), f"CACHE_HIT: {cache_hit}\n")
+        _log_progress(log_path, "CACHE_READY")
 
         # RQ1/RQ2
         rq12_log = rq12_dir / "log.txt"
         write_text(str(rq12_log), f"RUN_DIR: {rq12_dir}\n", append=False)
+        _log_progress([log_path, rq12_log], "RQ12_START")
         data_df = df_forward.copy()
         data_df = data_df.rename(
             columns={
@@ -174,6 +205,13 @@ def main() -> None:
         data_split_df = attach_split(data_df, splits_df)
         validate_split(data_split_df, expected_hours=24, hour_col="hour")
         save_parquet(splits_df, str(rq12_dir / "splits.parquet"))
+        train_n = int((data_split_df["split"] == "train").sum())
+        val_n = int((data_split_df["split"] == "val").sum())
+        test_n = int((data_split_df["split"] == "test").sum())
+        _log_progress(
+            [log_path, rq12_log],
+            f"SPLIT_READY train_rows={train_n} val_rows={val_n} test_rows={test_n}",
+        )
 
         X_all = np.asarray(cached["lasttoken_layer31"], dtype=np.float32)
         if X_all.shape[0] != len(data_split_df):
@@ -196,6 +234,7 @@ def main() -> None:
             X_val = X_train
             y_val = y_train
 
+        _log_progress([log_path, rq12_log], "READOUT_TRAIN_START")
         head = train_readout(
             X_train=X_train,
             y_train=y_train,
@@ -205,9 +244,13 @@ def main() -> None:
             lr=1e-3,
             weight_decay=0.0,
             device=device,
+            progress_callback=lambda msg: _log_progress([log_path, rq12_log], msg),
         )
+        _log_progress([log_path, rq12_log], "READOUT_TRAIN_DONE")
+        _log_progress([log_path, rq12_log], "PREDICT_START")
         X_test = X_all[test_mask.to_numpy()]
         y_hat_test = predict_readout(head, X_test, device=device)
+        _log_progress([log_path, rq12_log], f"PREDICT_DONE n_test_rows={len(y_hat_test)}")
 
         pred_test_df = data_split_df.loc[
             test_mask,
@@ -226,6 +269,7 @@ def main() -> None:
             str(log_path),
             f"RQ12 DONE: {rq12_dir / 'predictions.parquet'} | {rq12_dir / 'metrics.json'}\n",
         )
+        _log_progress([log_path, rq12_log], "RQ12_DONE")
 
         # Release large cached dicts not needed for RQ3 (rq3 uses lazy loader from files).
         del cached
@@ -234,6 +278,7 @@ def main() -> None:
         rq3_log = rq3_dir / "log.txt"
         write_text(str(rq3_log), f"RUN_DIR: {rq3_dir}\n", append=False)
         write_text(str(rq3_log), f"CACHE_DIR: {cache_dir}\n")
+        _log_progress([log_path, rq3_log], "RQ3_START")
         if not cache_exists(cache_dir):
             raise FileNotFoundError("Forward cache not found before RQ3 execution.")
 
@@ -247,6 +292,10 @@ def main() -> None:
         )
         write_text(str(rq3_log), f"N_PAIRS_GU: {len(pairs_df)}\n")
         write_text(str(rq3_log), f"N_NODES_GU: {len(nodes_df)}\n")
+        _log_progress(
+            [log_path, rq3_log],
+            f"RQ3_START row_gu={len(row_gu)} n_pairs={len(pairs_df)} n_nodes={len(nodes_df)}",
+        )
 
         pair_ids = pairs_df["pair_id"]
         dist_series = pairs_df.set_index("pair_id")["dist_km"]
@@ -261,6 +310,7 @@ def main() -> None:
         rq3_cached.open()
         try:
             for li, lk in enumerate(layer_keys()):
+                _log_progress([log_path, rq3_log], f"RQ3_LAYER_PROGRESS layer={li} key={lk}")
                 last_row = rq3_cached.get_lasttoken_layer(lk)[gu_idx]
                 pair_last = aggregate_time_one_layer(pair_row_indices, last_row)
                 acc = probe_distance_one_layer(pair_last, y_labels, train_mask_rq3, test_mask_rq3)
@@ -308,6 +358,7 @@ def main() -> None:
         write_text(str(rq3_log), "WROTE rq3_nodes_in_layerwise.npz\n")
 
         gt_abs = _abs_path(gu_path_raw)
+        _log_progress([log_path, rq3_log], "RQ3_STEP3_START")
         run_step3(
             run_dir=rq3_dir,
             gt_path=str(gt_abs),
@@ -321,7 +372,10 @@ def main() -> None:
             f"RQ3 DONE: {rq3_dir / 'rq3_role_alignment.parquet'} | "
             f"{rq3_dir / 'rq3_role_alignment_summary.json'}\n",
         )
+        _log_progress([log_path, rq3_log], "RQ3_DONE")
+        _log_progress(log_path, "RUN_DONE")
     except Exception as e:
+        _log_progress(log_path, f"RUN_FAILED error={type(e).__name__}: {e}")
         traceback.print_exc()
         print("EXCEPTION:", e)
         raise

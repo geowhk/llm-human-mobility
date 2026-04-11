@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import torch
 from torch import nn
@@ -26,6 +26,7 @@ def train_readout(
     lr: float = 1e-3,
     weight_decay: float = 0.0,
     device: str = "cpu",
+    progress_callback: Callable[[str], None] | None = None,
 ) -> LinearReadout:
     """Train readout head on log1p(flow)."""
     X_train_t = torch.as_tensor(X_train, dtype=torch.float32, device=device)
@@ -42,7 +43,7 @@ def train_readout(
 
     final_train_loss = None
     final_val_loss = None
-    for _ in range(int(epochs)):
+    for epoch_idx in range(int(epochs)):
         head.train()
         optimizer.zero_grad()
         pred_log = head(X_train_t)
@@ -56,6 +57,15 @@ def train_readout(
             val_pred_log = head(X_val_t)
             val_loss = loss_fn(val_pred_log, y_val_log)
             final_val_loss = float(val_loss.detach().cpu())
+
+        if progress_callback is not None:
+            epoch_num = epoch_idx + 1
+            if epoch_num == 1 or epoch_num == int(epochs) or epoch_num % 10 == 0:
+                progress_callback(
+                    "READOUT_EPOCH_PROGRESS "
+                    f"epoch={epoch_num}/{int(epochs)} "
+                    f"train_loss={final_train_loss:.6f} val_loss={final_val_loss:.6f}"
+                )
 
     head.train_history = {
         "final_train_loss": final_train_loss,

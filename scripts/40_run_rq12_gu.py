@@ -32,6 +32,23 @@ from mobility_llm.readout import predict_readout, train_readout
 from mobility_llm.split import attach_split, make_group_split, make_pair_id, validate_split
 
 
+def _log_progress(log_paths: Path | list[Path] | tuple[Path, ...] | None, message: str) -> None:
+    line = f"[PROGRESS] {message}"
+    print(line, flush=True)
+    if log_paths is None:
+        return
+    if isinstance(log_paths, Path):
+        paths = [log_paths]
+    else:
+        paths = list(log_paths)
+    seen: set[Path] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        write_text(str(path), line + "\n")
+        seen.add(path)
+
+
 def _abs_path(path_str: str) -> Path:
     p = Path(path_str)
     if not p.is_absolute():
@@ -149,6 +166,7 @@ def _compute_metrics_json(pred_df: pd.DataFrame) -> dict:
 
 
 def main() -> None:
+    log_path: Path | None = None
     try:
         parser = argparse.ArgumentParser()
         parser.add_argument("--config", required=True, help="Path to config YAML")
@@ -175,6 +193,8 @@ def main() -> None:
 
         log_path = run_dir / "log.txt"
         write_text(str(log_path), f"RUN_DIR: {run_dir}\n", append=False)
+        _log_progress(log_path, f"START config={args.config}")
+        _log_progress(log_path, f"CONFIG_LOADED run_id={resolved_run_id}")
         write_text(str(log_path), f"RUN_ID_RESOLVED: {resolved_run_id}\n")
         if resolved_run_id != run_mode:
             write_text(str(log_path), f"RUN_MODE: {run_mode}\n")
@@ -184,31 +204,39 @@ def main() -> None:
         input_path = str(gu_abs)
 
         write_text(str(log_path), f"INPUT_GU: {gu_abs}\n")
+        _log_progress(log_path, f"INPUT_PATHS_RESOLVED gu={gu_abs}")
         chunk_id = _extract_chunk_id(resolved_run_id, gu_abs.stem)
         if chunk_id is not None:
             write_text(str(log_path), f"CHUNK_ID: {chunk_id}\n")
 
         gu_df = load_parquet(str(gu_abs)).copy()
+        _log_progress(log_path, f"DATA_LOADED gu_rows={len(gu_df)}")
         prompts_gu = build_prompts_df(gu_df, "gu", config)
+        _log_progress(log_path, f"PROMPTS_BUILT gu_rows={len(prompts_gu)}")
 
         cache_key = compute_cache_key(input_path, config)
         cache_dir = get_cache_dir(PROJECT_ROOT, cache_key)
         cache_hit = cache_exists(cache_dir)
+        _log_progress(log_path, f"CACHE_LOOKUP cache_dir={cache_dir} cache_key={cache_key}")
+        _log_progress(log_path, "CACHE_HIT" if cache_hit else "CACHE_MISS")
         cached = ensure_cache(
             project_root=PROJECT_ROOT,
             config=config,
             input_path=input_path,
             df=prompts_gu,
+            progress_callback=lambda msg: _log_progress(log_path, msg),
         )
         write_text(str(log_path), f"CACHE_DIR: {cache_dir}\n")
         write_text(str(log_path), f"CACHE_KEY: {cache_key}\n")
         write_text(str(log_path), f"CACHE_HIT: {cache_hit}\n")
+        _log_progress(log_path, "CACHE_READY")
 
         rq12_log = rq12_dir / "log.txt"
         write_text(str(rq12_log), f"RUN_DIR: {rq12_dir}\n", append=False)
         write_text(str(rq12_log), f"CACHE_DIR: {cache_dir}\n")
         write_text(str(rq12_log), f"CACHE_KEY: {cache_key}\n")
         write_text(str(rq12_log), f"CACHE_HIT: {cache_hit}\n")
+        _log_progress([log_path, rq12_log], "RQ12_START")
 
         data_df = prompts_gu.copy()
         data_df = data_df.rename(
@@ -235,6 +263,13 @@ def main() -> None:
         validate_split(data_split_df, expected_hours=24, hour_col="hour")
         save_parquet(splits_df, str(rq12_dir / "splits.parquet"))
         write_text(str(rq12_log), "WROTE splits.parquet\n")
+        train_n = int((data_split_df["split"] == "train").sum())
+        val_n = int((data_split_df["split"] == "val").sum())
+        test_n = int((data_split_df["split"] == "test").sum())
+        _log_progress(
+            [log_path, rq12_log],
+            f"SPLIT_READY train_rows={train_n} val_rows={val_n} test_rows={test_n}",
+        )
 
         X_all = np.asarray(cached["lasttoken_layer31"], dtype=np.float32)
         if X_all.shape[0] != len(data_split_df):
@@ -257,6 +292,7 @@ def main() -> None:
             X_val = X_train
             y_val = y_train
 
+        _log_progress([log_path, rq12_log], "READOUT_TRAIN_START")
         head = train_readout(
             X_train=X_train,
             y_train=y_train,
@@ -266,9 +302,13 @@ def main() -> None:
             lr=1e-3,
             weight_decay=0.0,
             device=device,
+            progress_callback=lambda msg: _log_progress([log_path, rq12_log], msg),
         )
+        _log_progress([log_path, rq12_log], "READOUT_TRAIN_DONE")
+        _log_progress([log_path, rq12_log], "PREDICT_START")
         X_test = X_all[test_mask.to_numpy()]
         y_hat_test = predict_readout(head, X_test, device=device)
+        _log_progress([log_path, rq12_log], f"PREDICT_DONE n_test_rows={len(y_hat_test)}")
 
         pred_test_df = data_split_df.loc[
             test_mask,
@@ -287,11 +327,14 @@ def main() -> None:
         write_text(str(rq12_log), "WROTE predictions.parquet\n")
         write_text(str(rq12_log), "WROTE metrics.json\n")
         write_text(str(rq12_log), "RQ12 DONE\n")
+        _log_progress([log_path, rq12_log], "RQ12_DONE")
         write_text(
             str(log_path),
             f"RQ12 DONE: {rq12_dir / 'predictions.parquet'} | {rq12_dir / 'metrics.json'}\n",
         )
+        _log_progress(log_path, "RUN_DONE")
     except Exception as e:
+        _log_progress(log_path, f"RUN_FAILED error={type(e).__name__}: {e}")
         traceback.print_exc()
         print("EXCEPTION:", e)
         raise

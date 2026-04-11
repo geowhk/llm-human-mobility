@@ -34,6 +34,23 @@ from mobility_llm.rq3_step2 import (
 from mobility_llm.rq3_step3 import run_step3
 
 
+def _log_progress(log_paths: Path | list[Path] | tuple[Path, ...] | None, message: str) -> None:
+    line = f"[PROGRESS] {message}"
+    print(line, flush=True)
+    if log_paths is None:
+        return
+    if isinstance(log_paths, Path):
+        paths = [log_paths]
+    else:
+        paths = list(log_paths)
+    seen: set[Path] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        write_text(str(path), line + "\n")
+        seen.add(path)
+
+
 def _abs_path(path_str: str) -> Path:
     p = Path(path_str)
     if not p.is_absolute():
@@ -118,6 +135,7 @@ def _save_layerwise_npz(path: Path, layerwise: dict[str, np.ndarray]) -> None:
 
 
 def main() -> None:
+    log_path: Path | None = None
     try:
         parser = argparse.ArgumentParser()
         parser.add_argument("--config", required=True, help="Path to config YAML")
@@ -144,6 +162,8 @@ def main() -> None:
 
         log_path = run_dir / "log.txt"
         write_text(str(log_path), f"RUN_DIR: {run_dir}\n", append=False)
+        _log_progress(log_path, f"START config={args.config}")
+        _log_progress(log_path, f"CONFIG_LOADED run_id={resolved_run_id}")
         write_text(str(log_path), f"RUN_ID_RESOLVED: {resolved_run_id}\n")
         if resolved_run_id != run_mode:
             write_text(str(log_path), f"RUN_MODE: {run_mode}\n")
@@ -153,29 +173,37 @@ def main() -> None:
         input_path = str(gu_abs)
 
         write_text(str(log_path), f"INPUT_GU: {gu_abs}\n")
+        _log_progress(log_path, f"INPUT_PATHS_RESOLVED gu={gu_abs}")
         chunk_id = _extract_chunk_id(resolved_run_id, gu_abs.stem)
         if chunk_id is not None:
             write_text(str(log_path), f"CHUNK_ID: {chunk_id}\n")
 
         gu_df = load_parquet(str(gu_abs)).copy()
+        _log_progress(log_path, f"DATA_LOADED gu_rows={len(gu_df)}")
         prompts_gu = build_prompts_df(gu_df, "gu", config)
+        _log_progress(log_path, f"PROMPTS_BUILT gu_rows={len(prompts_gu)}")
 
         cache_key = compute_cache_key(input_path, config)
         cache_dir = get_cache_dir(PROJECT_ROOT, cache_key)
         cache_hit = cache_exists(cache_dir)
+        _log_progress(log_path, f"CACHE_LOOKUP cache_dir={cache_dir} cache_key={cache_key}")
+        _log_progress(log_path, "CACHE_HIT" if cache_hit else "CACHE_MISS")
         ensure_cache(
             project_root=PROJECT_ROOT,
             config=config,
             input_path=input_path,
             df=prompts_gu,
+            progress_callback=lambda msg: _log_progress(log_path, msg),
         )
         write_text(str(log_path), f"CACHE_DIR: {cache_dir}\n")
         write_text(str(log_path), f"CACHE_KEY: {cache_key}\n")
         write_text(str(log_path), f"CACHE_HIT: {cache_hit}\n")
+        _log_progress(log_path, "CACHE_READY")
 
         rq3_log = rq3_dir / "log.txt"
         write_text(str(rq3_log), f"RUN_DIR: {rq3_dir}\n", append=False)
         write_text(str(rq3_log), f"CACHE_DIR: {cache_dir}\n")
+        _log_progress([log_path, rq3_log], "RQ3_START")
         if not cache_exists(cache_dir):
             raise FileNotFoundError("Forward cache not found before RQ3 execution.")
 
@@ -189,6 +217,10 @@ def main() -> None:
         )
         write_text(str(rq3_log), f"N_PAIRS_GU: {len(pairs_df)}\n")
         write_text(str(rq3_log), f"N_NODES_GU: {len(nodes_df)}\n")
+        _log_progress(
+            [log_path, rq3_log],
+            f"RQ3_START row_gu={len(row_gu)} n_pairs={len(pairs_df)} n_nodes={len(nodes_df)}",
+        )
 
         pair_ids = pairs_df["pair_id"]
         dist_series = pairs_df.set_index("pair_id")["dist_km"]
@@ -203,6 +235,7 @@ def main() -> None:
         rq3_cached.open()
         try:
             for li, lk in enumerate(layer_keys()):
+                _log_progress([log_path, rq3_log], f"RQ3_LAYER_PROGRESS layer={li} key={lk}")
                 last_row = rq3_cached.get_lasttoken_layer(lk)[gu_idx]
                 pair_last = aggregate_time_one_layer(pair_row_indices, last_row)
                 acc = probe_distance_one_layer(pair_last, y_labels, train_mask_rq3, test_mask_rq3)
@@ -249,6 +282,7 @@ def main() -> None:
         write_text(str(rq3_log), "WROTE rq3_nodes_out_layerwise.npz\n")
         write_text(str(rq3_log), "WROTE rq3_nodes_in_layerwise.npz\n")
 
+        _log_progress([log_path, rq3_log], "RQ3_STEP3_START")
         run_step3(
             run_dir=rq3_dir,
             gt_path=str(gu_abs),
@@ -262,7 +296,10 @@ def main() -> None:
             f"RQ3 DONE: {rq3_dir / 'rq3_role_alignment.parquet'} | "
             f"{rq3_dir / 'rq3_role_alignment_summary.json'}\n",
         )
+        _log_progress([log_path, rq3_log], "RQ3_DONE")
+        _log_progress(log_path, "RUN_DONE")
     except Exception as e:
+        _log_progress(log_path, f"RUN_FAILED error={type(e).__name__}: {e}")
         traceback.print_exc()
         print("EXCEPTION:", e)
         raise

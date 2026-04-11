@@ -6,7 +6,7 @@ import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -25,6 +25,11 @@ _REQUIRED_CACHE_FILES = [
     "forward_cache_meta.json",
 ]
 _LAYER_KEYS = [f"layer_{i}" for i in range(32)]
+
+
+def _emit_progress(progress_callback: Callable[[str], None] | None, message: str) -> None:
+    if progress_callback is not None:
+        progress_callback(message)
 
 
 def compute_cache_key(input_path: str, config: dict) -> str:
@@ -139,6 +144,7 @@ def run_forward_and_cache(
     df: pd.DataFrame,
     cache_dir: Path,
     input_path: str,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict:
     """Run frozen-LLM forward on row-level prompts and write cache artifacts."""
     missing = [c for c in _required_df_columns() if c not in df.columns]
@@ -158,6 +164,14 @@ def run_forward_and_cache(
     prompts = df_work["prompt_text"].astype(str).tolist()
     origin_texts = df_work["origin_text"].astype(str).tolist()
     dest_texts = df_work["dest_text"].astype(str).tolist()
+    total_rows = int(len(df_work))
+    total_batches = max(1, (total_rows + batch_size - 1) // batch_size)
+    batch_log_interval = max(1, min(10, total_batches // 20 if total_batches >= 20 else 1))
+
+    _emit_progress(
+        progress_callback,
+        f"CACHE_BUILD_START rows={total_rows} batch_size={batch_size} total_batches={total_batches}",
+    )
 
     tokenizer, model = load_frozen_llama(config)
     device = str(config.get("model", {}).get("device", "cpu"))
@@ -170,7 +184,7 @@ def run_forward_and_cache(
     fallback_span_count = 0
     hidden_dim: Optional[int] = None
 
-    for start in range(0, len(prompts), batch_size):
+    for batch_idx, start in enumerate(range(0, len(prompts), batch_size), start=1):
         end = min(start + batch_size, len(prompts))
         prompt_batch = prompts[start:end]
         orig_batch = origin_texts[start:end]
@@ -286,6 +300,20 @@ def run_forward_and_cache(
             layer_role_out_gu_chunks[layer_idx].append(out_role[gu_mask_batch].astype(np.float32, copy=False))
             layer_role_in_gu_chunks[layer_idx].append(in_role[gu_mask_batch].astype(np.float32, copy=False))
 
+        if (
+            batch_idx == 1
+            or batch_idx == total_batches
+            or batch_idx % batch_log_interval == 0
+        ):
+            rows_done = int(end)
+            gu_rows_done = int(sum(chunk.shape[0] for chunk in layer_lasttoken_gu_chunks[31]))
+            _emit_progress(
+                progress_callback,
+                "CACHE_BATCH_PROGRESS "
+                f"batch={batch_idx}/{total_batches} rows={rows_done}/{total_rows} "
+                f"gu_rows={gu_rows_done}",
+            )
+
     if hidden_dim is None:
         hidden_dim = 0
 
@@ -335,6 +363,10 @@ def run_forward_and_cache(
     cache_dir = cache_dir.resolve()
     tmp_dir = cache_dir.parent / f".tmp_{cache_dir.name}_{uuid.uuid4().hex}"
     tmp_dir.mkdir(parents=True, exist_ok=False)
+    _emit_progress(
+        progress_callback,
+        f"CACHE_WRITE_START cache_dir={cache_dir} n_rows_all={meta['n_rows_all']} n_rows_gu={meta['n_rows_gu']}",
+    )
 
     try:
         row_index_df.to_parquet(tmp_dir / "forward_row_index.parquet", index=False)
@@ -354,6 +386,11 @@ def run_forward_and_cache(
             shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
 
+    _emit_progress(
+        progress_callback,
+        f"CACHE_BUILD_DONE cache_dir={cache_dir} n_rows_all={meta['n_rows_all']} n_rows_gu={meta['n_rows_gu']}",
+    )
+
     return meta
 
 
@@ -362,6 +399,7 @@ def ensure_cache(
     config: dict,
     input_path: str,
     df: pd.DataFrame,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Get cache if available; otherwise build it and then load."""
     cache_key = compute_cache_key(input_path, config)
@@ -375,6 +413,7 @@ def ensure_cache(
         df=df,
         cache_dir=cache_dir,
         input_path=input_path,
+        progress_callback=progress_callback,
     )
     return load_cached_arrays(cache_dir)
 
