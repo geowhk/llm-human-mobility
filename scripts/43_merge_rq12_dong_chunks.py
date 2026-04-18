@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 
 import pandas as pd
 
@@ -120,6 +121,57 @@ def _find_matching_run_dirs(runs_root: Path, run_id_prefix: str) -> list[Path]:
     return sorted(matches, key=lambda p: p.name)
 
 
+def _extract_chunk_id(run_name: str, run_id_prefix: str) -> str | None:
+    escaped_prefix = re.escape(run_id_prefix.rstrip("_"))
+    pattern = rf"^({escaped_prefix}_chunk_\d+)"
+    match = re.match(pattern, run_name)
+    if match:
+        return match.group(1)
+
+    fallback = re.search(r"(dong_(?:original|geometry)_chunk_\d+)", run_name)
+    if fallback:
+        return fallback.group(1)
+    return None
+
+
+def _evaluate_candidate(run_dir: Path, run_id_prefix: str) -> dict[str, object]:
+    pred_path = run_dir / "rq12" / "predictions.parquet"
+    metrics_path = run_dir / "rq12" / "metrics.json"
+    log_path = run_dir / "log.txt"
+    chunk_id = _extract_chunk_id(run_dir.name, run_id_prefix)
+
+    completed = True
+    reason = None
+    if chunk_id is None:
+        completed = False
+        reason = "unparseable_chunk_id"
+    elif not pred_path.exists():
+        completed = False
+        reason = "missing_predictions"
+    elif not metrics_path.exists():
+        completed = False
+        reason = "missing_metrics"
+    elif not log_path.exists():
+        completed = False
+        reason = "missing_log"
+    else:
+        log_text = log_path.read_text(encoding="utf-8")
+        if "RQ12 DONE" not in log_text:
+            completed = False
+            reason = "missing_rq12_done"
+
+    return {
+        "run_dir_name": run_dir.name,
+        "run_dir_path": str(run_dir),
+        "detected_chunk_id": chunk_id,
+        "completed": completed,
+        "reason": reason,
+        "predictions_path": str(pred_path),
+        "metrics_path": str(metrics_path),
+        "log_path": str(log_path),
+    }
+
+
 def _load_predictions(run_dir: Path) -> pd.DataFrame:
     pred_path = run_dir / "rq12" / "predictions.parquet"
     if not pred_path.exists():
@@ -171,23 +223,73 @@ def main() -> None:
         )
 
     write_text(str(log_path), f"N_MATCHING_RUN_DIRS: {len(run_dirs)}\n")
+    candidate_runs = [_evaluate_candidate(run_dir, args.run_id_prefix) for run_dir in run_dirs]
+    for candidate in candidate_runs:
+        write_text(
+            str(log_path),
+            "CANDIDATE "
+            f"name={candidate['run_dir_name']} "
+            f"chunk_id={candidate['detected_chunk_id']} "
+            f"completed={candidate['completed']} "
+            f"reason={candidate['reason']}\n",
+        )
+
+    completed_by_chunk: dict[str, list[dict[str, object]]] = {}
+    all_chunk_ids: set[str] = set()
+    missing_completed_chunk_ids: set[str] = set()
+
+    for candidate in candidate_runs:
+        chunk_id = candidate["detected_chunk_id"]
+        if isinstance(chunk_id, str):
+            all_chunk_ids.add(chunk_id)
+            if candidate["completed"]:
+                completed_by_chunk.setdefault(chunk_id, []).append(candidate)
+            else:
+                missing_completed_chunk_ids.add(chunk_id)
+
+    selected_runs: list[dict[str, object]] = []
+    for chunk_id in sorted(all_chunk_ids):
+        completed_runs = completed_by_chunk.get(chunk_id, [])
+        if not completed_runs:
+            write_text(str(log_path), f"MISSING_COMPLETED chunk_id={chunk_id}\n")
+            continue
+        latest = sorted(completed_runs, key=lambda item: str(item["run_dir_name"]))[-1]
+        selected_runs.append(latest)
+        write_text(
+            str(log_path),
+            f"SELECTED chunk_id={chunk_id} run_dir={latest['run_dir_name']}\n",
+        )
+
+    if not selected_runs:
+        raise FileNotFoundError(
+            f"No completed runs found under {runs_root} with prefix '{args.run_id_prefix}'."
+        )
+
+    missing_completed_chunk_ids = {
+        chunk_id for chunk_id in missing_completed_chunk_ids if chunk_id not in completed_by_chunk
+    }
 
     per_run_manifest: list[dict[str, object]] = []
     frames: list[pd.DataFrame] = []
 
-    for run_dir in run_dirs:
+    for selected in selected_runs:
+        run_dir = Path(str(selected["run_dir_path"]))
         pred_df = _load_predictions(run_dir)
         n_rows = int(len(pred_df))
         frames.append(pred_df)
         per_run_manifest.append(
             {
+                "chunk_id": selected["detected_chunk_id"],
                 "run_dir_name": run_dir.name,
                 "run_dir_path": str(run_dir),
                 "predictions_path": str(run_dir / "rq12" / "predictions.parquet"),
                 "n_rows": n_rows,
             }
         )
-        write_text(str(log_path), f"LOADED {run_dir.name}: n_rows={n_rows}\n")
+        write_text(
+            str(log_path),
+            f"LOADED chunk_id={selected['detected_chunk_id']} run={run_dir.name} n_rows={n_rows}\n",
+        )
 
     merged_df = pd.concat(frames, ignore_index=True)
     _validate_no_duplicates(merged_df)
@@ -204,21 +306,32 @@ def main() -> None:
     manifest = {
         "runs_root": str(runs_root),
         "run_id_prefix": args.run_id_prefix,
-        "number_of_chunk_runs_found": len(per_run_manifest),
+        "number_of_candidate_run_directories_found": len(candidate_runs),
+        "number_of_selected_chunk_runs": len(per_run_manifest),
+        "all_candidate_run_directories": [item["run_dir_path"] for item in candidate_runs],
+        "candidate_runs": candidate_runs,
+        "selected_latest_completed_runs": per_run_manifest,
         "source_run_directories": [item["run_dir_path"] for item in per_run_manifest],
-        "per_run_row_counts": per_run_manifest,
+        "total_unique_chunk_ids_discovered": len(all_chunk_ids),
+        "total_chunk_ids_with_completed_runs": len(completed_by_chunk),
+        "total_chunk_ids_missing_completed_runs": len(missing_completed_chunk_ids),
+        "chunk_ids_missing_completed_runs": sorted(missing_completed_chunk_ids),
         "total_merged_row_count": int(len(merged_df)),
         "output_predictions_path": str(predictions_out),
         "output_metrics_path": str(metrics_out),
     }
     write_json(str(manifest_out), manifest)
 
+    write_text(str(log_path), f"TOTAL_UNIQUE_CHUNK_IDS: {len(all_chunk_ids)}\n")
+    write_text(str(log_path), f"TOTAL_CHUNK_IDS_WITH_COMPLETED_RUNS: {len(completed_by_chunk)}\n")
+    write_text(str(log_path), f"TOTAL_CHUNK_IDS_MISSING_COMPLETED_RUNS: {len(missing_completed_chunk_ids)}\n")
     write_text(str(log_path), f"TOTAL_MERGED_ROWS: {len(merged_df)}\n")
     write_text(str(log_path), f"WROTE {predictions_out.name}\n")
     write_text(str(log_path), f"WROTE {metrics_out.name}\n")
     write_text(str(log_path), f"WROTE {manifest_out.name}\n")
 
-    print(f"Found {len(per_run_manifest)} chunk runs under {runs_root}")
+    print(f"Found {len(candidate_runs)} candidate runs under {runs_root}")
+    print(f"Selected {len(per_run_manifest)} latest completed chunk runs")
     print(f"Merged rows: {len(merged_df)}")
     print(f"Saved merged predictions: {predictions_out}")
     print(f"Saved merged metrics: {metrics_out}")

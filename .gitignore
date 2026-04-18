@@ -3,6 +3,7 @@ data/
 raw_data/
 processed_data/
 documents/
+aws_results/
 *.csv
 *.xlsx
 *.parquet
