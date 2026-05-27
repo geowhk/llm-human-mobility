@@ -4,6 +4,7 @@ raw_data/
 processed_data/
 documents/
 aws_results/
+outputs/
 *.csv
 *.xlsx
 *.parquet

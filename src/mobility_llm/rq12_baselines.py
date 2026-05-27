@@ -27,7 +27,7 @@ def prepare_canonical_rq12_df(prompts_df: pd.DataFrame) -> pd.DataFrame:
     df["orig"] = df["orig"].astype(str)
     df["dest"] = df["dest"].astype(str)
     df["hour"] = pd.to_numeric(df["hour"], errors="coerce").astype(int)
-    df["y_gt"] = pd.to_numeric(df["y_gt"], errors="coerce").fillna(0.0)
+    df["y_gt"] = pd.to_numeric(df["y_gt"], errors="coerce")
     df["dist_km"] = pd.to_numeric(df["dist_km"], errors="coerce")
     return make_pair_id(df)
 
