@@ -1,39 +1,50 @@
-# data files
-data/
+# Restricted or local data
+data/*
+!data/README.md
 raw_data/
 processed_data/
 documents/
-aws_results/
-outputs/
-*.csv
-*.xlsx
 *.parquet
 *.rds
+*.xlsx
 
-# environment files
+# Model outputs and server artifacts
+results/
+aws_results/
+outputs/
+logs/
+*.log
+Rplots.pdf
+
+# Curated aggregate tables are intentionally public
+!docs/results/
+!docs/results/*.csv
+
+# Public release keeps only the English README figure
+docs/figures/*
+!docs/figures/figure_4_4_geographic_alignment.png
+
+# Generated experiment configurations
+configs/generated/
+configs/chunked/
+
+# Environments and credentials
 .env
+.env.*
 .venv/
 venv/
 conda-env/
-README_RESEARCH.md
-configs/
-
-# Mac
-.DS_Store
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Results/logs
-results/
-logs/
+*.py[cod]
 
 # R
-r/
+.Rhistory
+.RData
+.Rproj.user/
 
-# development files
-scripts/10_run_dev.py
-colab.ipynb
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

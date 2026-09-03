@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "Please cite the associated master's thesis when using this code or its derived materials."
+title: "LLM Representations and Spatial Interaction"
+type: software
+authors:
+  - family-names: Kim
+    given-names: Woohyung
+repository-code: "https://github.com/geowhk/llm-human-mobility"
+license: MIT
+preferred-citation:
+  type: thesis
+  authors:
+    - family-names: Kim
+      given-names: Woohyung
+  title: "Evaluating the Capacity of Large Language Model Representations to Capture Spatial Interaction Structure: A Case Study Using Seoul Living Mobility Data"
+  year: 2026
+  institution:
+    name: Seoul National University

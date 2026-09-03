@@ -1,0 +1,121 @@
+schema_version: 1
+run:
+  mode: full
+  output_root: results/runs
+  run_id: gu_original_principles
+  overwrite: false
+  seed: 202511
+data:
+  datasets:
+    gu:
+      path: data/processed/gt_flow_gu.parquet
+    dong:
+      path: data/processed/gt_flow_dong.parquet
+    rq3:
+      path: data/processed/gt_flow_gu.parquet
+  id_to_prompt_name:
+    gu: data/external/code_to_name_gu.parquet
+    dong: data/external/code_to_name_dong.parquet
+columns:
+  origin_id: orig
+  dest_id: dest
+  hour: arrival_hour
+  dist_km: dist_km
+  flow_gt: flow
+prompt:
+  variant: original
+  language: en
+  template: |
+    Task: Estimate the hourly number of people traveling from one administrative area to another in Seoul.
+
+    General spatial interaction principles:
+    Some origins generate more trips than others because they differ in population, activity, and urban function.
+    Some destinations attract more trips than others because they differ in opportunities, services, jobs, and urban centrality.
+    All else being equal, flows tend to decrease as distance or travel cost between origin and destination increases.
+
+    Origin: {origin_text}
+    Destination: {dest_text}
+    Hour: {hour}
+  hour_format: '{hour:d}'
+  principle_prompt: true
+  principle_type: spatial_interaction_principles
+model:
+  engine: transformers
+  model_id: meta-llama/Meta-Llama-3-8B-Instruct
+  device: cuda
+  dtype: bfloat16
+  trust_remote_code: false
+  max_context_tokens: 4096
+generation:
+  n_repeat: 3
+  do_sample: true
+  temperature: 0.2
+  top_p: 0.9
+  max_new_tokens: 6
+  seed: 202511
+batching:
+  batch_size: 4
+parsing:
+  method: first_integer
+  allow_commas: true
+  clip_negative_to_zero: true
+  max_value: 100000000
+  on_fail: null
+analysis:
+  enabled:
+    rq1rq2: true
+    rq3: true
+rq1rq2:
+  scales:
+  - gu
+  - dong
+  aggregate_repeats: median
+  metrics:
+  - rmse
+  - mae
+  - smape
+  - cpc
+  repeat_dispersion:
+    enabled: true
+    stats:
+    - sd
+    - iqr
+  constraints:
+    distance_decay_fit:
+      enabled: true
+      model: power_law
+      y_transform: log1p
+      x_transform: log
+      fit_scope: global
+    ddvr:
+      enabled: true
+      group_by:
+      - origin_id
+      - hour
+      min_pairs: 3
+      include_zero_flow: true
+rq3:
+  dataset_key: rq3
+  representation:
+    output_hidden_states: true
+    repr_strategy: last_input_token
+    layers: all
+    pooling: none
+  alignment:
+    enabled: true
+    geo_distance: dist_km
+    repr_distance: cosine
+    correlation: spearman
+    report_by_layer: true
+  probe:
+    enabled: true
+    target: dist_bin
+    n_bins: 5
+    model: logistic_regression
+    split:
+      method: origin_group
+      test_frac: 0.2
+      seed: 202511
+    control_task:
+      enabled: true
+      n_shuffles: 1
