@@ -1,6 +1,8 @@
-# Candidate-release validation
+# Validation record
 
 Validation date: 2026-09-03 (Asia/Seoul)
+
+This document records checks performed during preparation of the public thesis archive. It is a historical validation record, not a claim that the experiments were rerun during subsequent documentation updates.
 
 ## Passed checks
 
@@ -20,6 +22,6 @@ Validation date: 2026-09-03 (Asia/Seoul)
 - The single public summary figure was regenerated with English labels from the checksum-verified local RQ3 exports and visually inspected. Its layer-level source exports remain excluded.
 - `CITATION.cff` was syntax-checked as YAML; registry-level validation should be repeated after an institutional thesis URL becomes available.
 
-## Release gate
+## Public archive and remaining limitation
 
 The release uses the existing `geowhk/llm-human-mobility` repository name and the MIT License. The institutional thesis URL remains pending.
