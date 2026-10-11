@@ -5,12 +5,6 @@ Research code and selected derived results for the master's thesis:
 > **Evaluating the Capacity of Large Language Model Representations to Capture Spatial Interaction Structure: A Case Study Using Seoul Living Mobility Data**<br>
 > Woohyung Kim, M.A. in Geography Education, Seoul National University, August 2026
 
-## Related journal-article repository
-
-This repository preserves the master's-thesis analyses, including output-level evaluation, internal-representation diagnostics, multiple spatial scales, and principle-prompt comparisons.
-
-The subsequent journal-article analysis is maintained separately in [frozen-llm-urban-mobility](https://github.com/geowhk/frozen-llm-urban-mobility). That repository focuses on district-level mobility prediction using reciprocal-dyad five-fold out-of-fold evaluation and additional non-LLM comparators. The two repositories document different evaluation designs; their results should not be treated as outputs from the same experiment.
-
 ## Overview
 
 This study asks whether representations extracted from a frozen large language model can capture and reproduce the spatial interaction structure of urban origin-destination (OD) flows. It uses hourly weekday mobility flows within Seoul and compares two ways of representing locations in prompts:
@@ -42,6 +36,23 @@ The clearest internal-representation result was the contrast in geographic align
 ![Layer-wise alignment between representation-space and geographic distances](docs/figures/figure_4_4_geographic_alignment.png)
 
 Aggregate result tables and brief summaries of the other analyses are provided in [docs/RESULTS.md](docs/RESULTS.md).
+
+## Research work represented here
+
+This thesis project by Woohyung Kim combines prompt-condition design, frozen-model representation extraction, supervised readout evaluation, and spatial diagnostics. The repository preserves the following implementations:
+
+- **Experiment design:** name/coordinate and principle-prompt conditions in [configs](configs/), with OD-pair splitting in [split.py](src/mobility_llm/split.py).
+- **Representation and prediction:** extraction and caching, linear readouts, and spatial-interaction benchmarks in [src/mobility_llm](src/mobility_llm/).
+- **Internal-representation analysis:** distance probing and layer-wise diagnostics in [rq3_step2.py](src/mobility_llm/rq3_step2.py) and [rq3_step3.py](src/mobility_llm/rq3_step3.py).
+- **Analysis and reporting:** district/neighborhood experiment scripts, R summaries, and [aggregate results](docs/RESULTS.md).
+
+These links identify the work preserved in the project, not a claim that the pretrained model or third-party libraries were developed by the author.
+
+## Related journal-article repository
+
+This repository preserves the master's-thesis analyses, including output-level evaluation, internal-representation diagnostics, multiple spatial scales, and principle-prompt comparisons.
+
+The subsequent journal-article analysis is maintained separately in [frozen-llm-urban-mobility](https://github.com/geowhk/frozen-llm-urban-mobility). That repository focuses on district-level mobility prediction using reciprocal-dyad five-fold out-of-fold evaluation and additional non-LLM comparators. The two repositories document different evaluation designs; their results should not be treated as outputs from the same experiment.
 
 ## Repository structure
 
