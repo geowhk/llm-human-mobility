@@ -5,6 +5,12 @@ Research code and selected derived results for the master's thesis:
 > **Evaluating the Capacity of Large Language Model Representations to Capture Spatial Interaction Structure: A Case Study Using Seoul Living Mobility Data**<br>
 > Woohyung Kim, M.A. in Geography Education, Seoul National University, August 2026
 
+## Related journal-article repository
+
+This repository preserves the master's-thesis analyses, including output-level evaluation, internal-representation diagnostics, multiple spatial scales, and principle-prompt comparisons.
+
+The subsequent journal-article analysis is maintained separately in [frozen-llm-urban-mobility](https://github.com/geowhk/frozen-llm-urban-mobility). That repository focuses on district-level mobility prediction using reciprocal-dyad five-fold out-of-fold evaluation and additional non-LLM comparators. The two repositories document different evaluation designs; their results should not be treated as outputs from the same experiment.
+
 ## Overview
 
 This study asks whether representations extracted from a frozen large language model can capture and reproduce the spatial interaction structure of urban origin-destination (OD) flows. It uses hourly weekday mobility flows within Seoul and compares two ways of representing locations in prompts:
@@ -81,4 +87,4 @@ The code and original documentation in this repository are available under the [
 
 ## Repository status
 
-This candidate release was reconstructed from the thesis workstation, the Git history used during analysis, and checksum-verified final AWS outputs. Raw model caches, row-level predictions, server logs, and restricted data are intentionally excluded.
+This public research archive was reconstructed from the thesis workstation, the Git history used during analysis, and checksum-verified final AWS outputs. Raw model caches, row-level predictions, server logs, and restricted data are intentionally excluded.
